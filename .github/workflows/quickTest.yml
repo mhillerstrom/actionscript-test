@@ -127,7 +127,6 @@ jobs:
     runs-on: 'composit'
     steps:  
       - name: Get AKS Credentials
-        steps:
         shell: bash
         run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
 
