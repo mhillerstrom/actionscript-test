@@ -26,151 +26,173 @@ env:
   azure-container-registry-name: glsdkcropsdev
 
 jobs:
+  restart-jobs:
+    runs-on: 'composit'
+    steps:  
+      - name: Get AKS Credentials
+        steps:
+        shell: bash
+        run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
 
-  # logon
-  get-aks-credentials:
-    - name: Get AKS Credentials
-      runs-on: 'composit'
-      shell: bash
-      run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
+      - name: Helm tool installer
+        uses: Azure/setup-helm@v2.0
+    
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
+        env:
+          GITHUB_TOKEN: ${{ inputs.github-token }}
+        with:
+          kubelogin-version: 'latest'
 
-  helm-tool-installer:
-    - name: Helm tool installer
-      runs-on: 'composit'
-      uses: Azure/setup-helm@v2.0
+      - name: Export Kubeconfig
+          #if: ${{github.event.inputs.private_cluster == 'true'}}
+        shell: bash
+        run: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
+          kubectl get no
 
-  install-kubelogin:
-    - name: Install kubelogin
-      runs-on: 'composit'
-      uses: azure/use-kubelogin@v1
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-      with:
-        kubelogin-version: 'latest'
-
-  export-kubeconfig:
-    - name: Export Kubeconfig
-      runs-on: 'composit'
-        #if: ${{github.event.inputs.private_cluster == 'true'}}
-      shell: bash
-      run: |
-        export KUBECONFIG="$HOME/.kube/config"
-        kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
-        kubectl get no
-
-  login-to-helm-registry:
-    - name: Login to helm registry
-      runs-on: 'composit'
-      shell: bash
-      run: |
-        helmUser="00000000-0000-0000-0000-000000000000"
-        helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
-        helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
-      env:
-        HELM_EXPERIMENTAL_OCI: '1'
-
-  stop-labelapi-servicesworker-dev:
-    - name: labelapi-serviceworker-dev
-      runs-on: 'composit'
-      if: contains('labelapi-servicesworker-dev', inputs.service) && contains('stop', inputs.function)
-      env:
-        azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
-        azure-kubernetes-service-name: glsdk-aks-priv-dev
-        dockerfile-path: src/LabelAPI.Services.Console/Dockerfile
-        helm-chart-type: workerservice
-        helm-chart-version: 0.5.1
-        service-name: labelapi-servicesworker-dev
-        service-file-name: LabelAPI.Services.Console
-        kubernetes-namespace: label-api
-        values-file-patsh: helm/servicesservice/values.yaml
-        host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
-        emissary-mapping-file-path: ""
-        tag-prefix: services
-      shell: bash
-      run: |
-        kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
-
-  restart-labelapi-servicesworker-dev:
-    - name: labelapi-serviceworker-dev
-      runs-on: 'composit'
-      if: contains('labelapi-servicesworker-dev', inputs.service) && contains('restart', inputs.function)
-      env:
-        azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
-        azure-kubernetes-service-name: glsdk-aks-priv-dev
-        dockerfile-path: src/LabelAPI.Services.Console/Dockerfile
-        helm-chart-type: workerservice
-        helm-chart-version: 0.5.1
-        service-name: labelapi-servicesworker-dev
-        service-file-name: LabelAPI.Services.Console
-        kubernetes-namespace: label-api
-        values-file-path: helm/servicesservice/values.yaml
-        host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
-        emissary-mapping-file-path: ""
-        tag-prefix: services
-      shell: bash
-      run: |
-        kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
-        helm install ${{env.service-name}}-service \
-          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
-          --version latest \
-          -f ${{env.values-file-path}} \
-          -n ${{env.kubsernetes-namespace}} \
-          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
-          --set tenantId=${{env.azure-tenant-id}} \
-          --set clientId=${{env.kubelogin-client-id}} \
-          --set clientSecret=${{env.kubelogin-client-secret}}
+      - name: Login to helm registry
+        shell: bash
+        run: |
+          helmUser="00000000-0000-0000-0000-000000000000"
+          helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
+          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
         env:
           HELM_EXPERIMENTAL_OCI: '1'
 
-  stop-labelapi-zpltemplateworker-dev:
-    - name: labelapi-serviceworker-dev
-      runs-on: 'composit'
-      if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('stop', inputs.function)
-      env:
-        azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
-        azure-kubernetes-service-name: glsdk-aks-priv-dev
-        dockerfile-path: src/LabelAPI.ZplTemplate.API/Dockerfile
-        helm-chart-type: workerservice
-        helm-chart-version: 0.5.1
-        service-name: labelapi-zpltemplateworker-dev
-        service-file-name: LabelAPI.ZplTemplate.API
-        kubernetes-namespace: label-api
-        values-file-path: helm/zpltemplateservice/values.yaml
-        host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
-        emissary-mapping-file-path: ""
-        tag-prefix: zpltemplate
-      shell: bash
-      run: |
-        kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
 
-  restart-labelapi-zpltemplateworker-dev:
-    - name: labelapi-serviceworker-dev
-      runs-on: 'composit'
-      if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('restart', inputs.function)
-      env:
-        azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
-        azure-kubernetes-service-name: glsdk-aks-priv-dev
-        dockerfile-path: src/LabelAPI.ZplTemplate.API/Dockerfile
-        helm-chart-type: workerservice
-        helm-chart-version: 0.5.1
-        service-name: labelapi-zpltemplateworker-dev
-        service-file-name: LabelAPI.ZplTemplate.API
-        kubernetes-namespace: label-api
-        values-file-path: helm/zpltemplateservice/values.yaml
-        host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
-        emissary-mapping-file-path: ""
-        tag-prefix: zpltemplate
-      shell: bash
-      run: |
-        kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
-        helm install ${{env.service-name}}-service \
-          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
-          --version latest \
-          -f ${{env.values-file-path}} \
-          -n ${{env.kubernetes-namespace}} \
-          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
-          --set tenantId=${{env.azure-tenant-id}} \
-          --set clientId=${{env.kubelogin-client-id}} \
-          --set clientSecret=${{env.kubelogin-client-secret}}
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-servicesworker-dev', inputs.service) && contains('restart', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.Services.Console/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-servicesworker-dev
+          service-file-name: LabelAPI.Services.Console
+          kubernetes-namespace: label-api
+          values-file-path: helm/servicesservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: services
+        shell: bash
+        run: |
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
+          helm install ${{env.service-name}}-service \
+            oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+            --version latest \
+            -f ${{env.values-file-path}} \
+            -n ${{env.kubsernetes-namespace}} \
+            --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+            --set tenantId=${{env.azure-tenant-id}} \
+            --set clientId=${{env.kubelogin-client-id}} \
+            --set clientSecret=${{env.kubelogin-client-secret}}
+          env:
+            HELM_EXPERIMENTAL_OCI: '1'
+
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('restart', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.ZplTemplate.API/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-zpltemplateworker-dev
+          service-file-name: LabelAPI.ZplTemplate.API
+          kubernetes-namespace: label-api
+          values-file-path: helm/zpltemplateservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: zpltemplate
+        shell: bash
+        run: |
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
+          helm install ${{env.service-name}}-service \
+            oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+            --version latest \
+            -f ${{env.values-file-path}} \
+            -n ${{env.kubernetes-namespace}} \
+            --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+            --set tenantId=${{env.azure-tenant-id}} \
+            --set clientId=${{env.kubelogin-client-id}} \
+            --set clientSecret=${{env.kubelogin-client-secret}}
+          env:
+            HELM_EXPERIMENTAL_OCI: '1'
+
+
+  stop-jobs:
+    runs-on: 'composit'
+    steps:  
+      - name: Get AKS Credentials
+        steps:
+        shell: bash
+        run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
+
+      - name: Helm tool installer
+        uses: Azure/setup-helm@v2.0
+    
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
+        env:
+          GITHUB_TOKEN: ${{ inputs.github-token }}
+        with:
+          kubelogin-version: 'latest'
+
+      - name: Export Kubeconfig
+          #if: ${{github.event.inputs.private_cluster == 'true'}}
+        shell: bash
+        run: |
+          export KUBECONFIG="$HOME/.kube/config"
+          kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
+          kubectl get no
+
+      - name: Login to helm registry
+        shell: bash
+        run: |
+          helmUser="00000000-0000-0000-0000-000000000000"
+          helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
+          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
         env:
           HELM_EXPERIMENTAL_OCI: '1'
+
+
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-servicesworker-dev', inputs.service) && contains('stop', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.Services.Console/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-servicesworker-dev
+          service-file-name: LabelAPI.Services.Console
+          kubernetes-namespace: label-api
+          values-file-patsh: helm/servicesservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: services
+        shell: bash
+        run: |
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
+
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('stop', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.ZplTemplate.API/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-zpltemplateworker-dev
+          service-file-name: LabelAPI.ZplTemplate.API
+          kubernetes-namespace: label-api
+          values-file-path: helm/zpltemplateservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: zpltemplate
+        shell: bash
+        run: |
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
