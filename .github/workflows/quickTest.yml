@@ -44,8 +44,6 @@ jobs:
         shell: bash
         env:
           my-env: "This is my env!"
-        using:
-          my-test: "This is my test"
         run: |
           echo "container-registry: ${{env.container-registry-name}}"
           echo "my-env: ${{env.my-env}}"
