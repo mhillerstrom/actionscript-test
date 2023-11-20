@@ -4,63 +4,84 @@ on:
   workflow_dispatch:
     inputs:
       function:
-        description: 'stop, restart'    
+        description: 'stop, restart'
         required: true
         default: 'restart'
+        type: choice
+        options:
+          - restart
+          - stop
       namespace:
         description: 'Name space (e.g. "label-api")'
         required: true
         default: 'label-api'
+        type: string
       service:
         description: 'relevant part of service name (e.g. "labelapi-" for all or "servicesworker" for specific)'
         required: true
         default: 'labelapi-'
+        type: string
 
 env:
-  # These variables are the same for both pubic and private cluster
+  # These variables are the same for both public and private cluster
   azure-client-id: ${{secrets.GLSDK_GITHUB_APP_REGISTRATION_DEV}}
   azure-tenant-id: ${{secrets.AZURE_TENANT_ID}}
   azure-subscription: ${{secrets.AZURE_SUBSCRIPTION_ID_DEV}}
   kubelogin-client-id: ${{secrets.GLSDK_SP_AKS_DEV_ID_DEV}}
   kubelogin-client-secret: ${{secrets.GLSDK_SP_AKS_DEV_KEY_DEV}}
   azure-container-registry-name: glsdkcropsdev
+    
+  github-token: ${{secrets.NUGET_AUTH_TOKEN}}
+  GITHUB_TOKEN: ${{secrets.NUGET_AUTH_TOKEN}}
+  HELM_EXPERIMENTAL_OCI: '1'
 
 jobs:
   restart-jobs:
-    runs-on: 'composit'
-    steps:  
+    if: contains('restart', inputs.function)
+    runs-on: [self-hosted, kubernetes-dev]
+    steps:
+      - name: Show variables
+        shell: bash
+        env:
+          my-env: "This is my env!"
+        using:
+          my-test: "This is my test"
+        run: |
+          echo "container-registry: ${{env.container-registry-name}}"
+          echo "my-env: ${{env.my-env}}"
+          echo "my-test: ${{env.my-test}}"
+      - name: Azure Login
+        uses: Azure/login@v1.4.3
+        with:
+          client-id: ${{env.azure-client-id}}
+          tenant-id: ${{env.azure-tenant-id}}
+          subscription-id: ${{env.azure-subscription}}
       - name: Get AKS Credentials
         shell: bash
-        run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
-
+        run: az aks get-credentials --resource-group ${{env.azure-kubernetes-service-resource-group}} --name ${{env.azure-kubernetes-service-name}} --overwrite-existing
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
       - name: Helm tool installer
         uses: Azure/setup-helm@v2.0
-    
       - name: Install kubelogin
         uses: azure/use-kubelogin@v1
-        env:
-          GITHUB_TOKEN: ${{ inputs.github-token }}
         with:
           kubelogin-version: 'latest'
-
       - name: Export Kubeconfig
-          #if: ${{github.event.inputs.private_cluster == 'true'}}
         shell: bash
         run: |
           export KUBECONFIG="$HOME/.kube/config"
-          kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
+          kubelogin convert-kubeconfig -l spn --client-id ${{env.kubelogin-client-id}} --client-secret ${{env.kubelogin-client-secret}} --tenant-id ${{env.azure-tenant-id}}
           kubectl get no
-
       - name: Login to helm registry
         shell: bash
         run: |
           helmUser="00000000-0000-0000-0000-000000000000"
-          helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
-          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
-        env:
-          HELM_EXPERIMENTAL_OCI: '1'
-
-
+          helmPassword=$(az acr login --name ${{env.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
+          helm registry login "${{env.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
+        
+   
       - name: labelapi-serviceworker-dev
         if: contains('labelapi-servicesworker-dev', inputs.service) && contains('restart', inputs.function)
         env:
@@ -80,17 +101,42 @@ jobs:
         run: |
           kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
           helm install ${{env.service-name}}-service \
-            oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
-            --version latest \
-            -f ${{env.values-file-path}} \
-            -n ${{env.kubsernetes-namespace}} \
-            --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
-            --set tenantId=${{env.azure-tenant-id}} \
-            --set clientId=${{env.kubelogin-client-id}} \
-            --set clientSecret=${{env.kubelogin-client-secret}}
-          env:
-            HELM_EXPERIMENTAL_OCI: '1'
-
+          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+          --version latest \
+          -f ${{env.values-file-path}} \
+          -n ${{env.kubsernetes-namespace}} \
+          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+          --set tenantId=${{env.azure-tenant-id}} \
+          --set clientId=${{env.kubelogin-client-id}} \
+          --set clientSecret=${{env.kubelogin-client-secret}}
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-servicesworker-dev', inputs.service) && contains('restart', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.Services.Console/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-servicesworker-dev
+          service-file-name: LabelAPI.Services.Console
+          kubernetes-namespace: label-api
+          values-file-path: helm/servicesservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: services
+        shell: bash
+        run: |
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
+          helm install ${{env.service-name}}-service \
+          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+          --version latest \
+          -f ${{env.values-file-path}} \
+          -n ${{env.kubsernetes-namespace}} \
+          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+          --set tenantId=${{env.azure-tenant-id}} \
+          --set clientId=${{env.kubelogin-client-id}} \
+          --set clientSecret=${{env.kubelogin-client-secret}}
+        
       - name: labelapi-serviceworker-dev
         if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('restart', inputs.function)
         env:
@@ -110,51 +156,140 @@ jobs:
         run: |
           kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
           helm install ${{env.service-name}}-service \
-            oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
-            --version latest \
-            -f ${{env.values-file-path}} \
-            -n ${{env.kubernetes-namespace}} \
-            --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
-            --set tenantId=${{env.azure-tenant-id}} \
-            --set clientId=${{env.kubelogin-client-id}} \
-            --set clientSecret=${{env.kubelogin-client-secret}}
-          env:
-            HELM_EXPERIMENTAL_OCI: '1'
-
+          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+          --version latest \
+          -f ${{env.values-file-path}} \
+          -n ${{env.kubernetes-namespace}} \
+          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+          --set tenantId=${{env.azure-tenant-id}} \
+          --set clientId=${{env.kubelogin-client-id}} \
+          --set clientSecret=${{env.kubelogin-client-secret}}
+        
 
   stop-jobs:
-    runs-on: 'composit'
-    steps:  
+    if: contains('stop', inputs.function)
+    runs-on: [self-hosted, kubernetes-dev]
+    steps:
+      - name: Azure Login
+        uses: Azure/login@v1.4.3
+        with:
+          client-id: ${{secrets.GLSDK_GITHUB_APP_REGISTRATION_DEV}}
+          tenant-id: ${{secrets.AZURE_TENANT_ID}}
+          subscription-id: ${{secrets.AZURE_SUBSCRIPTION_ID_DEV}}
       - name: Get AKS Credentials
-        shell: bash
-        run: az aks get-credentials --resource-group ${{inputs.azure-kubernetes-service-resource-group}} --name ${{inputs.azure-kubernetes-service-name}} --overwrite-existing
-
+        continue-on-error: true
+        shell: powershell
+        run: az aks get-credentials --resource-group ${{env.azure-kubernetes-service-resource-group}} --name ${{env.azure-kubernetes-service-name}} --overwrite-existing
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
       - name: Helm tool installer
         uses: Azure/setup-helm@v2.0
-    
-      - name: Install kubelogin
-        uses: azure/use-kubelogin@v1
-        env:
-          GITHUB_TOKEN: ${{ inputs.github-token }}
-        with:
-          kubelogin-version: 'latest'
-
-      - name: Export Kubeconfig
-          #if: ${{github.event.inputs.private_cluster == 'true'}}
-        shell: bash
+      - name: Setup kubelogin Private Cluster
+        shell: powershell
         run: |
-          export KUBECONFIG="$HOME/.kube/config"
+          az aks install-cli
+          $targetDir="$env:USERPROFILE\.azure-kubelogin"
+          $oldPath = [System.Environment]::GetEnvironmentVariable("Path","User")
+          $oldPathArray=($oldPath) -split ";"
+          if(-Not($oldPathArray -Contains "$targetDir")) {
+           write-host "Permanently adding $targetDir to User Path"
+           $newPath = "$oldPath;$targetDir" -replace ";+", ";"
+           [System.Environment]::SetEnvironmentVariable("Path",$newPath,"User")
+           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","User"),[System.Environment]::GetEnvironmentVariable("Path","Machine") -join ";"
+          }
+          $env:path += ';C:\Windows\ServiceProfiles\NetworkService\.azure-kubectl'
+          $env:path += ';C:\Windows\ServiceProfiles\NetworkService\.azure-kubelogin'
+      - name: Export Kubeconfig
+        shell: powershell
+        run: |
+          $env:KUBECONFIG="$env:USERPROFILE\.kube\config"
           kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
           kubectl get no
-
       - name: Login to helm registry
+        shell: powershell
+        run: |
+          $helmUser="00000000-0000-0000-0000-000000000000"
+          $helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
+          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
+
+        
+      - name: labelapi-serviceworker-dev
+        if: contains('labelapi-zpltemplateworker-dev', inputs.service) && contains('restart', inputs.function)
+        env:
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+          dockerfile-path: src/LabelAPI.ZplTemplate.API/Dockerfile
+          helm-chart-type: workerservice
+          helm-chart-version: 0.5.1
+          service-name: labelapi-zpltemplateworker-dev
+          service-file-name: LabelAPI.ZplTemplate.API
+          kubernetes-namespace: label-api
+          values-file-path: helm/zpltemplateservice/values.yaml
+          host-name: glsdkaksprivatedev.westeurope.cloudapp.azure.com
+          emissary-mapping-file-path: ""
+          tag-prefix: zpltemplate
         shell: bash
         run: |
-          helmUser="00000000-0000-0000-0000-000000000000"
-          helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
-          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
+          kubectl scale -n ${{inputs.namespace}} deployment/@{{env.service-name}}-deployment --replicas 0
+          helm install ${{env.service-name}}-service \
+          oci://${{env.azure-container-registry-name}}.azurecr.io/helm/${{env.helm-chart-type}} \
+          --version latest \
+          -f ${{env.values-file-path}} \
+          -n ${{env.kubernetes-namespace}} \
+          --set image.repository=${{env.azure-container-registry-name}}.azurecr.io/${{env.service-name}} \
+          --set tenantId=${{env.azure-tenant-id}} \
+          --set clientId=${{env.kubelogin-client-id}} \
+          --set clientSecret=${{env.kubelogin-client-secret}}
+        
+
+  stop-jobs:
+    if: contains('stop', inputs.function)
+    runs-on: [self-hosted, kubernetes-dev]
+    steps:
+      - name: Azure Login
+        uses: Azure/login@v1.4.3
+        with:
+          client-id: ${{secrets.GLSDK_GITHUB_APP_REGISTRATION_DEV}}
+          tenant-id: ${{secrets.AZURE_TENANT_ID}}
+          subscription-id: ${{secrets.AZURE_SUBSCRIPTION_ID_DEV}}
+      - name: Get AKS Credentials
+        continue-on-error: true
+        shell: powershell
+        run: az aks get-credentials --resource-group ${{env.azure-kubernetes-service-resource-group}} --name ${{env.azure-kubernetes-service-name}} --overwrite-existing
         env:
-          HELM_EXPERIMENTAL_OCI: '1'
+          azure-kubernetes-service-resource-group: GLSDK-RG-aks-priv-Dev
+          azure-kubernetes-service-name: glsdk-aks-priv-dev
+      - name: Helm tool installer
+        uses: Azure/setup-helm@v2.0
+      - name: Setup kubelogin Private Cluster
+        shell: powershell
+        run: |
+          az aks install-cli
+          $targetDir="$env:USERPROFILE\.azure-kubelogin"
+          $oldPath = [System.Environment]::GetEnvironmentVariable("Path","User")
+          $oldPathArray=($oldPath) -split ";"
+          if(-Not($oldPathArray -Contains "$targetDir")) {
+           write-host "Permanently adding $targetDir to User Path"
+           $newPath = "$oldPath;$targetDir" -replace ";+", ";"
+           [System.Environment]::SetEnvironmentVariable("Path",$newPath,"User")
+           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","User"),[System.Environment]::GetEnvironmentVariable("Path","Machine") -join ";"
+          }
+          $env:path += ';C:\Windows\ServiceProfiles\NetworkService\.azure-kubectl'
+          $env:path += ';C:\Windows\ServiceProfiles\NetworkService\.azure-kubelogin'
+      - name: Export Kubeconfig
+        shell: powershell
+        run: |
+          $env:KUBECONFIG="$env:USERPROFILE\.kube\config"
+          kubelogin convert-kubeconfig -l spn --client-id ${{inputs.kubelogin-client-id}} --client-secret ${{inputs.kubelogin-client-secret}} --tenant-id ${{inputs.azure-tenant-id}}
+          kubectl get no
+      - name: Login to helm registry
+        shell: powershell
+        run: |
+          $helmUser="00000000-0000-0000-0000-000000000000"
+          $helmPassword=$(az acr login --name ${{inputs.azure-container-registry-name}} --expose-token --output tsv --query accessToken)
+          helm registry login "${{inputs.azure-container-registry-name}}.azurecr.io" --username $helmUser --password $helmPassword
+
 
 
       - name: labelapi-serviceworker-dev
