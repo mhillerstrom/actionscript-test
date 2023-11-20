@@ -38,7 +38,7 @@ env:
 jobs:
   restart-jobs:
     if: contains('restart', inputs.function)
-    runs-on: [linux] # [self-hosted, kubernetes-dev]
+    runs-on: ubuntu-latest # [self-hosted, kubernetes-dev]
     steps:
       - name: Show variables
         shell: bash
@@ -166,7 +166,7 @@ jobs:
 
   stop-jobs:
     if: contains('stop', inputs.function)
-    runs-on: [linux] # [self-hosted, kubernetes-dev]
+    runs-on: ubuntu-latest # [self-hosted, kubernetes-dev]
     steps:
       - name: Azure Login
         uses: Azure/login@v1.4.3
